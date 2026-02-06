@@ -38,36 +38,35 @@ if uploaded_file and api_key:
     os.environ["AIzaSyCnBvIfLUvROwOCHaNsIb-qfLaBHv25dNw"] = api_key
     
     # Only analyze if we haven't already analyzed this session
+     
     if st.session_state.vector_store is None:
-        with st.status("Analyzing document... (This may take 10-20 seconds)") as status:
-            try:
-                # Save PDF locally
-                st.write("Reading file...")
+        try:
+            with st.spinner("Step 1: Reading PDF..."):
                 with open("temp.pdf", "wb") as f:
                     f.write(uploaded_file.getbuffer())
-                
-                # Load and Split
-                st.write("Splitting text into chunks...")
                 loader = PyPDFLoader("temp.pdf")
                 data = loader.load()
-                text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+
+            with st.spinner("Step 2: Chunks & Embeddings..."):
+                text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
                 docs = text_splitter.split_documents(data)
                 
-                # Embeddings and Vector Store
-                st.write("Creating vector database...")
+                # We specify the model explicitly
                 embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
                 
-                # Create the store and save to session state
-                vectorstore = Chroma.from_documents(docs, embeddings)
+                # We use a unique 'persist_directory' for Windows stability
+                vectorstore = Chroma.from_documents(
+                    documents=docs, 
+                    embedding=embeddings,
+                    persist_directory="./chroma_db" 
+                )
                 st.session_state.vector_store = vectorstore
+                st.success("Analysis Complete!")
                 
-                status.update(label="Analysis Complete!", state="complete")
-                st.success("You can now ask questions!")
-            
-            except Exception as e:
-                st.error(f"Error during analysis: {e}")
-                status.update(label="Analysis Failed", state="error")
-
+        except Exception as e:
+            st.error(f"Analysis Failed: {str(e)}")
+            # This will print the full error to your terminal so you can tell me what it says!
+            print(f"DEBUG ERROR: {e}")
 # 5. Question & Answer Logic
 if st.session_state.vector_store:
     query = st.chat_input("Ask a question about your document")
