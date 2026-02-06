@@ -3,83 +3,103 @@ try:
     import sys
     sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 except (ImportError, RuntimeError):
-    # This block runs on your Windows machine
     pass
 
 import streamlit as st
-# ... rest of your code ...
-
-import streamlit as st
-# ... the rest of your imports follow ...
-import streamlit as st
+import os
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_community.vectorstores import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain.chains.retrieval_qa.base import RetrievalQA
 from langchain_community.document_loaders import PyPDFLoader
-import os
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.prompts import ChatPromptTemplate
 
-# 1. Setup the Page
-st.set_page_config(page_title="Enterprise AI Data Search", layout="wide")
+# 1. Setup
+st.set_page_config(page_title="Gemini RAG Expert", layout="wide")
 st.title("📄 Gemini Enterprise RAG System")
-st.markdown("### Upload company documents and get instant, grounded answers.")
 
-# 2. Sidebar for API Key
+# 2. Sidebar - API Key and Session Management
 with st.sidebar:
-    st.header("Configuration")
-    api_key = st.text_input("Enter your Gemini API Key", type="password")
-    if api_key:
-        os.environ["AIzaSyCnBvIfLUvROwOCHaNsIb-qfLaBHv25dNw"] = api_key
-    st.info("Get your key at [aistudio.google.com](https://aistudio.google.com/)")
+    st.header("Settings")
+    api_key = st.text_input("Enter Gemini API Key", type="password")
+    if st.button("Clear Chat History"):
+        st.session_state.vector_store = None
+        st.rerun()
 
-# 3. File Uploader
-uploaded_file = st.file_uploader("Upload a PDF document", type="pdf")
+# 3. Initialize "Brain" (Session State)
+if "vector_store" not in st.session_state:
+    st.session_state.vector_store = None
+
+# 4. File Upload Logic
+uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
 
 if uploaded_file and api_key:
-    # Save the file temporarily
-    with open("temp.pdf", "wb") as f:
-        f.write(uploaded_file.getbuffer())
+    os.environ["AIzaSyCnBvIfLUvROwOCHaNsIb-qfLaBHv25dNw"] = api_key
     
-    with st.spinner("Analyzing document structure..."):
-        # Load and Split the PDF
-        loader = PyPDFLoader("temp.pdf")
-        data = loader.load()
-        
-        # Split text into chunks
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        docs = text_splitter.split_documents(data)
-        
-        # Create Embeddings using Gemini's model
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-        
-        # Store in Vector Database (ChromaDB)
-        # Using a persist directory makes it more professional
-        vectorstore = Chroma.from_documents(docs, embeddings)
-        
-        # Create the Retrieval Chain - using Gemini 1.5 Flash (fast & cheap)
-        llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
-        
-        # This setup returns the source documents so we can show where the answer came from
-        qa_chain = RetrievalQA.from_chain_type(
-            llm=llm, 
-            chain_type="stuff", 
-            retriever=vectorstore.as_retriever(),
-            return_source_documents=True
-        )
-        
-        st.success("Analysis complete! Your AI assistant is ready.")
+    # Only analyze if we haven't already analyzed this session
+    if st.session_state.vector_store is None:
+        with st.status("Analyzing document... (This may take 10-20 seconds)") as status:
+            try:
+                # Save PDF locally
+                st.write("Reading file...")
+                with open("temp.pdf", "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                
+                # Load and Split
+                st.write("Splitting text into chunks...")
+                loader = PyPDFLoader("temp.pdf")
+                data = loader.load()
+                text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+                docs = text_splitter.split_documents(data)
+                
+                # Embeddings and Vector Store
+                st.write("Creating vector database...")
+                embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+                
+                # Create the store and save to session state
+                vectorstore = Chroma.from_documents(docs, embeddings)
+                st.session_state.vector_store = vectorstore
+                
+                status.update(label="Analysis Complete!", state="complete")
+                st.success("You can now ask questions!")
+            
+            except Exception as e:
+                st.error(f"Error during analysis: {e}")
+                status.update(label="Analysis Failed", state="error")
 
-    # 4. Chat Interface
-    query = st.text_input("Ask a question about the document:")
+# 5. Question & Answer Logic
+if st.session_state.vector_store:
+    query = st.chat_input("Ask a question about your document")
+    
     if query:
-        with st.spinner("Thinking..."):
-            response = qa_chain.invoke({"query": query})
+        # Show user message
+        with st.chat_message("user"):
+            st.write(query)
             
-            st.markdown("### 🤖 AI Answer:")
-            st.write(response["result"])
+        # Generate Answer
+        try:
+            llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash")
             
-            # Show the Sources (The "Trust" Factor)
-            with st.expander("See Sources (Evidence)"):
-                for i, doc in enumerate(response["source_documents"][:2]):
-                    st.markdown(f"**Source {i+1} (Page {doc.metadata.get('page', 'N/A')}):**")
-                    st.caption(doc.page_content[:300] + "...")
+            prompt = ChatPromptTemplate.from_template("""
+            Answer the question based only on the provided context.
+            Context: {context}
+            Question: {input}
+            """)
+            
+            document_chain = create_stuff_documents_chain(llm, prompt)
+            retriever = st.session_state.vector_store.as_retriever()
+            retrieval_chain = create_retrieval_chain(retriever, document_chain)
+            
+            with st.chat_message("assistant"):
+                with st.spinner("Searching document..."):
+                    response = retrieval_chain.invoke({"input": query})
+                    st.write(response["answer"])
+                    
+                    # Optional: Show sources
+                    with st.expander("Show relevant sections"):
+                        for doc in response["context"]:
+                            st.write(f"---\n{doc.page_content[:300]}...")
+                            
+        except Exception as e:
+            st.error(f"Error generating answer: {e}")
