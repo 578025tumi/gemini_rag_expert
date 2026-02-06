@@ -1,6 +1,13 @@
-__import__('pysqlite3')
-import sys
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+try:
+    import pysqlite3
+    import sys
+    sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+except (ImportError, RuntimeError):
+    # This block runs on your Windows machine
+    pass
+
+import streamlit as st
+# ... rest of your code ...
 
 import streamlit as st
 # ... the rest of your imports follow ...
