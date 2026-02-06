@@ -29,7 +29,7 @@ with st.sidebar:
     st.header("Configuration")
     api_key = st.text_input("Enter your Gemini API Key", type="password")
     if api_key:
-    os.environ["os.environ["GOOGLE_API_KEY"] = api_key"] = api_key
+    os.environ["AIzaSyCnBvIfLUvROwOCHaNsIb-qfLaBHv25dNw"] = api_key
     st.info("Get your key at [aistudio.google.com](https://aistudio.google.com/)")
 
 # 3. File Uploader
