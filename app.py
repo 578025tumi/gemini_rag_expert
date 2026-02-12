@@ -1,12 +1,14 @@
+import streamlit as st
+import os
+
+# 1. STREAMLIT CLOUD FIX (Must be at the very top)
 try:
     import pysqlite3
     import sys
     sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 except (ImportError, RuntimeError):
-    pass
+    pass # This allows the code to run on your local Windows machine
 
-import streamlit as st
-import os
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_community.vectorstores import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -15,90 +17,38 @@ from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 
-# 1. Setup
+# ==========================================
+# PAGE CONFIG & UI
+# ==========================================
 st.set_page_config(page_title="Gemini RAG Expert", layout="wide")
-st.title("📄 Gemini Enterprise RAG System")
+st.title("📄 Gemini Enterprise Knowledge System")
+st.markdown("---")
 
-# 2. Sidebar - API Key and Session Management
+# ==========================================
+# SIDEBAR - CONFIGURATION
+# ==========================================
 with st.sidebar:
-    st.header("Settings")
+    st.header("🔑 Authentication")
     api_key = st.text_input("Enter Gemini API Key", type="password")
-    if st.button("Clear Chat History"):
-        st.session_state.vector_store = None
+    
+    st.markdown("---")
+    st.header("📋 Instructions")
+    st.write("1. Enter your API Key.")
+    st.write("2. Upload a PDF document.")
+    st.write("3. Chat with the document logic.")
+    
+    if st.button("Clear Cache/New Doc"):
+        if "vector_store" in st.session_state:
+            del st.session_state.vector_store
         st.rerun()
 
-# 3. Initialize "Brain" (Session State)
-if "vector_store" not in st.session_state:
-    st.session_state.vector_store = None
-
-# 4. File Upload Logic
-uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
+# ==========================================
+# CORE RAG LOGIC
+# ==========================================
+uploaded_file = st.file_uploader("Upload a PDF for AI Analysis", type="pdf")
 
 if uploaded_file and api_key:
-    os.environ["AIzaSyCnBvIfLUvROwOCHaNsIb-qfLaBHv25dNw"] = api_key
+    # Set the environment variable for the libraries to use
+    os.environ["GOOGLE_API_KEY"] = api_key
     
-    # Only analyze if we haven't already analyzed this session
-     
-    if st.session_state.vector_store is None:
-        try:
-            with st.spinner("Step 1: Reading PDF..."):
-                with open("temp.pdf", "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-                loader = PyPDFLoader("temp.pdf")
-                data = loader.load()
-
-            with st.spinner("Step 2: Chunks & Embeddings..."):
-                text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-                docs = text_splitter.split_documents(data)
-                
-                # We specify the model explicitly
-                embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-                
-                # We use a unique 'persist_directory' for Windows stability
-                vectorstore = Chroma.from_documents(
-                    documents=docs, 
-                    embedding=embeddings,
-                    persist_directory="./chroma_db" 
-                )
-                st.session_state.vector_store = vectorstore
-                st.success("Analysis Complete!")
-                
-        except Exception as e:
-            st.error(f"Analysis Failed: {str(e)}")
-            # This will print the full error to your terminal so you can tell me what it says!
-            print(f"DEBUG ERROR: {e}")
-# 5. Question & Answer Logic
-if st.session_state.vector_store:
-    query = st.chat_input("Ask a question about your document")
-    
-    if query:
-        # Show user message
-        with st.chat_message("user"):
-            st.write(query)
-            
-        # Generate Answer
-        try:
-            llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash")
-            
-            prompt = ChatPromptTemplate.from_template("""
-            Answer the question based only on the provided context.
-            Context: {context}
-            Question: {input}
-            """)
-            
-            document_chain = create_stuff_documents_chain(llm, prompt)
-            retriever = st.session_state.vector_store.as_retriever()
-            retrieval_chain = create_retrieval_chain(retriever, document_chain)
-            
-            with st.chat_message("assistant"):
-                with st.spinner("Searching document..."):
-                    response = retrieval_chain.invoke({"input": query})
-                    st.write(response["answer"])
-                    
-                    # Optional: Show sources
-                    with st.expander("Show relevant sections"):
-                        for doc in response["context"]:
-                            st.write(f"---\n{doc.page_content[:300]}...")
-                            
-        except Exception as e:
-            st.error(f"Error generating answer: {e}")
+    #
